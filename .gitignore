@@ -1,0 +1,14 @@
+# MoonBit build + dependency caches
+_build/
+.mooncakes/
+target/
+
+# assembler / object output and compiled test binaries
+*.o
+*.s
+*.c.s
+
+# scratch experiments left in the workspace root
+/test_simple.c
+/test_simple.c.s
+/test_return42.o

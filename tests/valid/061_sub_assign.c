@@ -1,0 +1,2 @@
+// EXPECT:EXIT=2
+int main(void) { int x = 5; x -= 3; return x; }

@@ -1,0 +1,1014 @@
+///| Arm64 macOS code generator
+
+struct Codegen {
+  output : StringBuilder
+  mut label_counter : Int
+  mut string_labels : Int
+  string_literals : Array[(String, String)]
+  float_constants : Array[(String, String, Bool)]  // label, value_str, is_double
+  global_vars : Array[(String, @ast.Type, @ast.Init?, @ast.StorageClass)]
+  analyzer : @sema.Analyzer?
+  mut current_func : String
+  break_stack : Array[String]
+  continue_stack : Array[String]
+  mut last_type : @ast.Type
+}
+
+pub fn Codegen::new(analyzer : @sema.Analyzer?) -> Codegen {
+  { output: StringBuilder::new(), label_counter: 0, string_labels: 0, string_literals: [], float_constants: [], global_vars: [], analyzer, current_func: "", break_stack: [], continue_stack: [], last_type: @ast.void_type() }
+}
+
+pub fn generate(tu : @ast.TranslationUnit, analyzer : @sema.Analyzer?) -> String {
+  let cg = Codegen::new(analyzer)
+
+  // First pass: collect global variable declarations
+  for decl in tu.decls {
+    cg.collect_global(decl)
+  }
+
+  cg.emit_line(".section __TEXT,__text,regular,pure_instructions")
+  cg.emit_line(".build_version macos, 14, 0")
+  cg.emit_line("")
+
+  // Second pass: translate function definitions
+  for decl in tu.decls {
+    cg.translate_top_level(decl)
+  }
+
+  // Emit string literals
+  for item in cg.string_literals {
+    let (label, content) = item
+    cg.emit_line("")
+    cg.emit_line(label + ":")
+    cg.emit_line(".asciz \"" + content + "\"")
+  }
+
+  // Emit global variables in __DATA,__data section
+  if cg.global_vars.length() > 0 || cg.float_constants.length() > 0 {
+    cg.emit_line("")
+    cg.emit_line(".section __DATA,__data")
+    cg.emit_line(".p2align 2")
+    let mut gi = 0
+    while gi < cg.global_vars.length() {
+      let (name, typ, init, sc) = cg.global_vars[gi]
+      cg.emit_line("")
+      // Only export if not static
+      match sc { @ast.StorageClass::Static => (); _ => cg.emit_line(".globl _" + name) }
+      cg.emit_line("_" + name + ":")
+      match init {
+        Some(@ast.Init::Single(@ast.IntLiteral(n))) => {
+          cg.emit_line("  .long " + n.to_string())
+        }
+        Some(@ast.Init::Single(@ast.CharLiteral(c))) => {
+          cg.emit_line("  .long " + c.to_string())
+        }
+        Some(@ast.Init::Single(@ast.AddressOf(@ast.Identifier(func_name)))) => {
+          // Function pointer initializer: emit address of function
+          cg.emit_line("  .quad _" + func_name)
+        }
+        Some(@ast.Init::Single(@ast.Identifier(func_name))) => {
+          // Function pointer initializer (implicit &func)
+          cg.emit_line("  .quad _" + func_name)
+        }
+        Some(_) => cg.emit_line("  .long 0")
+        None => cg.emit_line("  .space " + @sema.type_size(typ).to_string())
+      }
+      gi = gi + 1
+    }
+    // Emit float constants
+    let mut fi = 0
+    while fi < cg.float_constants.length() {
+      let (label, value_str, is_double) = cg.float_constants[fi]
+      cg.emit_line("")
+      cg.emit_line(label + ":")
+      if is_double {
+        cg.emit_line("  .double " + value_str)
+      } else {
+        cg.emit_line("  .float " + value_str)
+      }
+      fi = fi + 1
+    }
+  }
+
+  // Add subsections_via_symbols
+  cg.emit_line("")
+  cg.emit_line(".subsections_via_symbols")
+
+  StringBuilder::to_string(cg.output)
+}
+
+fn Codegen::collect_global(self : Codegen, tl : @ast.TopLevel) -> Unit {
+  match tl {
+    @ast.Decl(decl) => {
+      match decl {
+        @ast.Decl::VarDecl(st, typ, name, init) => {
+          self.global_vars.push((name, typ, init, st))
+        }
+        _ => ()
+      }
+    }
+    _ => ()
+  }
+}
+
+fn Codegen::translate_top_level(self : Codegen, tl : @ast.TopLevel) -> Unit {
+  match tl {
+    @ast.Function(decl) => self.translate_func_def(decl)
+    @ast.Decl(_) => ()
+  }
+}
+
+fn Codegen::translate_func_def(self : Codegen, decl : @ast.Decl) -> Unit {
+  match decl {
+    @ast.FuncDef(_rettype, name, params, body) => {
+      self.current_func = name
+      // Compute frame size: 16 for fp+lr + max offset for locals.
+      // Round up to nearest 16 bytes.
+      let local_size = self.compute_frame_size()
+      let frame_size = ((local_size + 16 + 15) / 16) * 16
+
+      self.emit_line("")
+      self.emit_line(".globl _" + name)
+      self.emit_line(".p2align 2")
+      self.emit_line("_" + name + ":")
+      self.emit_line("  sub sp, sp, #" + frame_size.to_string())
+      self.emit_line("  stp x29, x30, [sp, #" + (frame_size - 16).to_string() + "]")
+      self.emit_line("  add x29, sp, #" + (frame_size - 16).to_string())
+
+      // Save incoming parameters at [x29, #-16], [x29, #-8], [x29, #0], [x29, #8], ...
+      let num_params = if params.length() > 8 { 8 } else { params.length() }
+      let mut pi = 0
+      while pi < num_params {
+        let off = pi * 8 - 16
+        self.emit_line("  str x" + pi.to_string() + ", [x29, #" + off.to_string() + "]")
+        pi = pi + 1
+      }
+
+      self.translate_stmt(body)
+
+      // Epilogue
+      self.emit_line("_epilogue_" + name + ":")
+      self.emit_line("  ldp x29, x30, [sp, #" + (frame_size - 16).to_string() + "]")
+      self.emit_line("  add sp, sp, #" + frame_size.to_string())
+      self.emit_line("  ret")
+      self.current_func = ""
+    }
+    _ => ()
+  }
+}
+
+fn Codegen::translate_stmt(self : Codegen, stmt : @ast.Stmt) -> Unit {
+  match stmt {
+    @ast.Compound(stmts) => for s in stmts { self.translate_stmt(s) }
+    @ast.Return(Some(expr)) => { self.translate_expr(expr); self.emit_line("  b _epilogue_" + self.current_func) }
+    @ast.Return(None) => { self.emit_line("  b _epilogue_" + self.current_func) }
+    @ast.DeclStmt(decl) => {
+      match decl {
+        @ast.Decl::VarDecl(_st, _typ, name, init) => {
+          match init {
+            Some(@ast.Init::Single(expr)) => {
+              self.translate_expr(expr)
+              self.store_var(name)
+            }
+            Some(@ast.Init::Aggregate(items)) => {
+              let mut elem_idx = 0
+              for item in items {
+                match item {
+                  @ast.InitItem::Designated(_, expr) => {
+                    // Get base address of array variable
+                    match self.analyzer {
+                      Some(a) => match a.lookup(name) {
+                        Some(sym) => {
+                          let off = sym.offset - 16
+                          self.emit_line("  add x0, x29, #" + off.to_string())
+                        }
+                        None => ()
+                      }
+                      None => ()
+                    }
+                    self.emit_line("  mov x9, x0")
+                    self.translate_expr(expr)
+                    let off = elem_idx * 4
+                    if off > 0 {
+                      self.emit_line("  str x0, [x9, #" + off.to_string() + "]")
+                    } else {
+                      self.emit_line("  str x0, [x9]")
+                    }
+                    elem_idx = elem_idx + 1
+                  }
+                  _ => ()
+                }
+              }
+            }
+            _ => ()
+          }
+        }
+        _ => ()
+      }
+    }
+    @ast.ExprStmt(Some(expr)) => self.translate_expr(expr)
+    @ast.ExprStmt(None) => ()
+
+    @ast.If(cond, then_stmt, else_opt) => {
+      let else_label = self.next_label()
+      let end_label = self.next_label()
+      self.translate_expr(cond)
+      self.emit_line("  cmp x0, #0")
+      self.emit_line("  b.eq " + else_label)
+      self.translate_stmt(then_stmt)
+      self.emit_line("  b " + end_label)
+      self.emit_line(else_label + ":")
+      match else_opt { Some(s) => self.translate_stmt(s); None => () }
+      self.emit_line(end_label + ":")
+    }
+
+    @ast.While(cond, body) => {
+      let start_label = self.next_label()
+      let end_label = self.next_label()
+      self.break_stack.push(end_label)
+      self.continue_stack.push(start_label)
+      self.emit_line(start_label + ":")
+      self.translate_expr(cond)
+      self.emit_line("  cmp x0, #0")
+      self.emit_line("  b.eq " + end_label)
+      self.translate_stmt(body)
+      self.emit_line("  b " + start_label)
+      self.emit_line(end_label + ":")
+      self.break_stack.pop() |> ignore
+      self.continue_stack.pop() |> ignore
+    }
+
+    @ast.DoWhile(body, cond) => {
+      let start_label = self.next_label()
+      let end_label = self.next_label()
+      self.break_stack.push(end_label)
+      self.continue_stack.push(start_label)
+      self.emit_line(start_label + ":")
+      self.translate_stmt(body)
+      self.translate_expr(cond)
+      self.emit_line("  cmp x0, #0")
+      self.emit_line("  b.ne " + start_label)
+      self.emit_line(end_label + ":")
+      self.break_stack.pop() |> ignore
+      self.continue_stack.pop() |> ignore
+    }
+
+    @ast.For(init, cond, post, body) => {
+      match init { Some(e) => self.translate_expr(e) |> ignore; None => () }
+      let start_label = self.next_label()
+      let continue_label = self.next_label() // label before post-increment
+      let end_label = self.next_label()
+      self.break_stack.push(end_label)
+      self.continue_stack.push(continue_label)
+      self.emit_line(start_label + ":")
+      match cond {
+        Some(e) => { self.translate_expr(e); self.emit_line("  cmp x0, #0"); self.emit_line("  b.eq " + end_label) }
+        None => ()
+      }
+      self.translate_stmt(body)
+      self.emit_line(continue_label + ":")
+      match post { Some(e) => self.translate_expr(e) |> ignore; None => () }
+      self.emit_line("  b " + start_label)
+      self.emit_line(end_label + ":")
+      self.break_stack.pop() |> ignore
+      self.continue_stack.pop() |> ignore
+    }
+
+    @ast.Break => {
+      match self.break_stack {
+        [_, ..] => {
+          let label = self.break_stack[self.break_stack.length() - 1]
+          self.emit_line("  b " + label)
+        }
+        _ => self.emit_line("  // break outside loop")
+      }
+    }
+    @ast.Continue => {
+      match self.continue_stack {
+        [_, ..] => {
+          let label = self.continue_stack[self.continue_stack.length() - 1]
+          self.emit_line("  b " + label)
+        }
+        _ => self.emit_line("  // continue outside loop")
+      }
+    }
+    @ast.Label(label, body) => { self.emit_line(label + ":"); self.translate_stmt(body) }
+    @ast.Goto(label) => self.emit_line("  b " + label)
+    @ast.Switch(expr, body) => self.translate_switch(expr, body)
+    @ast.Case(_, _) => ()
+    @ast.Default(_) => ()
+  }
+}
+
+fn Codegen::translate_expr(self : Codegen, expr : @ast.Expr) -> Unit {
+  match expr {
+    @ast.IntLiteral(n) => self.emit_line("  mov x0, #" + n.to_string())
+    @ast.CharLiteral(c) => self.emit_line("  mov x0, #" + c.to_string())
+    @ast.FloatLiteral(f) => {
+      let label = self.add_float_constant(f, false)
+      self.emit_line("  adrp x8, " + label + "@PAGE")
+      self.emit_line("  add x8, x8, " + label + "@PAGEOFF")
+      self.emit_line("  ldr s0, [x8]")
+    }
+    @ast.StringLiteral(s) => {
+      let label = self.add_string_literal(s)
+      self.emit_line("  adrp x0, " + label + "@PAGE")
+      self.emit_line("  add x0, x0, " + label + "@PAGEOFF")
+    }
+    @ast.Identifier(name) => self.load_var(name)
+    @ast.Add(l, r) => {
+      let typ = self.expr_type(l)
+      if is_float_type(typ) {
+        let prefix = reg_prefix(typ)
+        self.translate_expr(l)
+        self.emit_line("  str " + prefix + "0, [sp, #-16]!")
+        self.translate_expr(r)
+        self.emit_line("  ldr " + prefix + "1, [sp], #16")
+        self.emit_line("  fadd " + prefix + "0, " + prefix + "0, " + prefix + "1")
+      } else {
+        self.binary(l, r, "add")
+      }
+    }
+    @ast.Sub(l, r) => {
+      let typ = self.expr_type(l)
+      if is_float_type(typ) {
+        let prefix = reg_prefix(typ)
+        self.translate_expr(l)
+        self.emit_line("  str " + prefix + "0, [sp, #-16]!")
+        self.translate_expr(r)
+        self.emit_line("  ldr " + prefix + "1, [sp], #16")
+        self.emit_line("  fsub " + prefix + "0, " + prefix + "0, " + prefix + "1")
+      } else {
+        self.binary(l, r, "sub")
+      }
+    }
+    @ast.Mul(l, r) => {
+      let typ = self.expr_type(l)
+      if is_float_type(typ) {
+        let prefix = reg_prefix(typ)
+        self.translate_expr(l)
+        self.emit_line("  str " + prefix + "0, [sp, #-16]!")
+        self.translate_expr(r)
+        self.emit_line("  ldr " + prefix + "1, [sp], #16")
+        self.emit_line("  fmul " + prefix + "0, " + prefix + "0, " + prefix + "1")
+      } else {
+        self.binary(l, r, "mul")
+      }
+    }
+    @ast.Div(l, r) => {
+      let typ = self.expr_type(l)
+      if is_float_type(typ) {
+        let prefix = reg_prefix(typ)
+        self.translate_expr(l)
+        self.emit_line("  str " + prefix + "0, [sp, #-16]!")
+        self.translate_expr(r)
+        self.emit_line("  ldr " + prefix + "1, [sp], #16")
+        self.emit_line("  fdiv " + prefix + "0, " + prefix + "0, " + prefix + "1")
+      } else {
+        self.binary(l, r, "sdiv")
+      }
+    }
+    @ast.Mod(l, r) => self.mod_div(l, r)
+    @ast.BitAnd(l, r) => self.binary(l, r, "and")
+    @ast.BitOr(l, r) => self.binary(l, r, "orr")
+    @ast.BitXor(l, r) => self.binary(l, r, "eor")
+    @ast.Shl(l, r) => self.binary(l, r, "lsl")
+    @ast.Shr(l, r) => self.binary(l, r, "asr")
+    @ast.Eq(l, r) => self.cmp_op(l, r, "eq")
+    @ast.Ne(l, r) => self.cmp_op(l, r, "ne")
+    @ast.Lt(l, r) => self.cmp_op(l, r, "lt")
+    @ast.Gt(l, r) => self.cmp_op(l, r, "gt")
+    @ast.Le(l, r) => self.cmp_op(l, r, "le")
+    @ast.Ge(l, r) => self.cmp_op(l, r, "ge")
+    @ast.LogicalAnd(l, r) => self.logical_bin(l, r, false)
+    @ast.LogicalOr(l, r) => self.logical_bin(l, r, true)
+    @ast.LogicalNot(e) => { self.translate_expr(e); self.emit_line("  cmp x0, #0"); self.emit_line("  cset x0, eq") }
+    @ast.UnaryMinus(e) => { self.translate_expr(e); self.emit_line("  neg x0, x0") }
+    @ast.UnaryPlus(e) => self.translate_expr(e)
+    @ast.BitwiseNot(e) => { self.translate_expr(e); self.emit_line("  mvn x0, x0") }
+    @ast.Assign(l, r) => {
+      match l {
+        @ast.Identifier(name) => {
+          self.translate_expr(r)
+          self.store_var(name)
+        }
+        @ast.Deref(ptr) => {
+          // *ptr = val: compute ptr address, keep it, compute val, store to [ptr_addr]
+          self.translate_expr(ptr)
+          self.emit_line("  mov x9, x0")   // save pointer in x9
+          self.translate_expr(r)           // value in x0
+          self.emit_line("  str x0, [x9]")
+        }
+        @ast.Subscript(arr, idx) => {
+          self.translate_address_of(arr)
+          self.emit_line("  mov x9, x0")
+          self.translate_expr(idx)
+          self.emit_line("  lsl x0, x0, #2")
+          self.emit_line("  add x9, x9, x0")
+          self.translate_expr(r)
+          self.emit_line("  str x0, [x9]")
+        }
+        @ast.Dot(obj, member) => {
+          self.translate_address_of(obj)
+          let off = self.struct_field_offset(obj, member)
+          if off > 0 { self.emit_line("  add x0, x0, #" + off.to_string()) }
+          self.emit_line("  mov x9, x0")
+          self.translate_expr(r)
+          self.emit_line("  str x0, [x9]")
+        }
+        @ast.Arrow(obj, member) => {
+          self.translate_expr(obj)
+          let off = self.struct_field_offset(obj, member)
+          if off > 0 { self.emit_line("  add x0, x0, #" + off.to_string()) }
+          self.emit_line("  mov x9, x0")
+          self.translate_expr(r)
+          self.emit_line("  str x0, [x9]")
+        }
+        _ => {
+          self.translate_expr(r)
+          self.emit_line("  str x0, [sp]")
+        }
+      }
+    }
+    @ast.Call(func, args) => {
+      let n = if args.length() > 8 { 8 } else { args.length() }
+      // Determine if this is an indirect call
+      let mut is_indirect = false
+      match func {
+        @ast.Identifier(name) => {
+          match self.analyzer {
+            Some(a) => {
+              match a.lookup(name) {
+                Some(sym) => {
+              // If the symbol is a variable, it's indirect
+              is_indirect = match sym.kind {
+                @sema.SymbolKind::Func => false
+                _ => true
+              }
+            }
+                None => ()
+              }
+            }
+            None => ()
+          }
+        }
+        _ => { is_indirect = true }
+      }
+
+      if n > 0 {
+        // For indirect calls: evaluate func pointer first, save in x16
+        if is_indirect {
+          self.translate_expr(func)
+          self.emit_line("  mov x16, x0")  // save function pointer in x16
+        }
+        // Evaluate arg0 last (it stays in x0/w0)
+        // First evaluate args[1..] and store on stack
+        let mut i = 1
+        while i < n {
+          self.translate_expr(args[i])
+          self.emit_line("  str x0, [sp, #" + ((i - 1) * 8).to_string() + "]")
+          i = i + 1
+        }
+        // Evaluate arg0 — goes in x0
+        self.translate_expr(args[0])
+        // Load args[1..] into x1.. registers
+        let mut j = 1
+        while j < n {
+          self.emit_line("  ldr x" + j.to_string() + ", [sp, #" + ((j - 1) * 8).to_string() + "]")
+          j = j + 1
+        }
+      }
+      if is_indirect {
+        // Function pointer stored in x16
+        self.emit_line("  blr x16")
+      } else {
+        match func {
+          @ast.Identifier(name) => self.emit_line("  bl _" + name)
+          _ => self.emit_line("  // shouldn't happen")
+        }
+      }
+    }
+    @ast.Cast(to_type, e) => {
+      let src_type = self.expr_type(e)
+      // Determine which register the source value is in
+      let src_is_float = is_float_type(src_type)
+      let dst_is_float = is_float_type(to_type)
+      // Evaluate source (puts value in x0 or s0 depending on type)
+      self.translate_expr(e)
+      if src_is_float && !dst_is_float {
+        // float → int: fcvtzs
+        self.emit_line("  fcvtzs w0, s0")
+      } else if !src_is_float && dst_is_float {
+        // int → float: scvtf
+        self.emit_line("  scvtf s0, w0")
+      } else if src_is_float && dst_is_float {
+        // float → double or double → float: fcvt
+        let src_reg = reg_prefix(src_type)
+        let dst_reg = reg_prefix(to_type)
+        if src_reg != dst_reg {
+          self.emit_line("  fcvt " + dst_reg + "0, " + src_reg + "0")
+        }
+      }
+      // int→int casts: truncation / extension
+      // Already handled by emit_cast for int subtypes
+    }
+    @ast.Comma(l, r) => { self.translate_expr(l); self.translate_expr(r) }
+    @ast.Conditional(cond, then_e, else_e) => self.translate_ternary(cond, then_e, else_e)
+    @ast.AddressOf(e) => self.translate_address_of(e)
+    @ast.Deref(e) => self.translate_deref(e)
+    @ast.Subscript(ptr, index) => self.translate_subscript(ptr, index)
+    @ast.Dot(e, member) => self.translate_dot(e, member)
+    @ast.Arrow(e, member) => self.translate_arrow(e, member)
+    @ast.PostfixInc(e) => { self.translate_expr(e); self.emit_line("  add x0, x0, #1") }
+    @ast.PostfixDec(e) => { self.translate_expr(e); self.emit_line("  sub x0, x0, #1") }
+    @ast.PrefixInc(e) => { self.translate_expr(e); self.emit_line("  add x0, x0, #1") }
+    @ast.PrefixDec(e) => { self.translate_expr(e); self.emit_line("  sub x0, x0, #1") }
+    _ => self.emit_line("  // todo expr")
+  }
+}
+
+fn Codegen::binary(self : Codegen, l : @ast.Expr, r : @ast.Expr, op : String) -> Unit {
+  self.translate_expr(l)
+  self.emit_line("  str x0, [sp, #-16]!")
+  self.translate_expr(r)
+  self.emit_line("  ldr x1, [sp], #16")
+  self.emit_line("  " + op + " x0, x1, x0")
+}
+
+fn Codegen::binary_typed(self : Codegen, l : @ast.Expr, r : @ast.Expr, op_kind : @ast.Expr) -> Unit {
+  let typ = self.expr_type(l)
+  if is_float_type(typ) {
+    let prefix = reg_prefix(typ)
+    let fop = match op_kind {
+      @ast.Add(_ , _) => "fadd"
+      @ast.Sub(_ , _) => "fsub"
+      @ast.Mul(_ , _) => "fmul"
+      @ast.Div(_ , _) => "fdiv"
+      _ => "fadd"
+    }
+    self.translate_expr(l)
+    self.emit_line("  str " + prefix + "0, [sp, #-16]!")
+    self.translate_expr(r)
+    self.emit_line("  ldr " + prefix + "1, [sp], #16")
+    self.emit_line("  " + fop + " " + prefix + "0, " + prefix + "0, " + prefix + "1")
+  } else {
+    let op = match op_kind {
+      @ast.Add(_ , _) => "add"
+      @ast.Sub(_ , _) => "sub"
+      @ast.Mul(_ , _) => "mul"
+      @ast.Div(_ , _) => "sdiv"
+      @ast.Mod(_ , _) => return self.mod_div(l, r)
+      _ => "add"
+    }
+    self.binary(l, r, op)
+  }
+}
+
+fn Codegen::expr_type(self : Codegen, e : @ast.Expr) -> @ast.Type {
+  match e {
+    @ast.Identifier(name) => {
+      match self.analyzer {
+        Some(a) => match a.lookup_var_type(name) { Some(t) => t; None => @ast.int_type(@ast.signed_signed()) }
+        None => @ast.int_type(@ast.signed_signed())
+      }
+    }
+    @ast.FloatLiteral(_) => @ast.float_type()
+    @ast.Add(l, _) => self.expr_type(l)
+    @ast.Sub(l, _) => self.expr_type(l)
+    @ast.Mul(l, _) => self.expr_type(l)
+    @ast.Div(l, _) => self.expr_type(l)
+    @ast.Mod(l, _) => self.expr_type(l)
+    _ => @ast.int_type(@ast.signed_signed())
+  }
+}
+
+fn Codegen::cmp_op(self : Codegen, l : @ast.Expr, r : @ast.Expr, cond : String) -> Unit {
+  self.translate_expr(l)
+  self.emit_line("  str x0, [sp, #-16]!")
+  self.translate_expr(r)
+  self.emit_line("  ldr x1, [sp], #16")
+  self.emit_line("  cmp x1, x0")
+  self.emit_line("  cset x0, " + cond)
+}
+
+fn Codegen::mod_div(self : Codegen, l : @ast.Expr, r : @ast.Expr) -> Unit {
+  self.translate_expr(l); self.emit_line("  str x0, [sp, #-16]!")
+  self.translate_expr(r)
+  self.emit_line("  ldr x1, [sp], #16")
+  self.emit_line("  sdiv x2, x1, x0")
+  self.emit_line("  msub x0, x2, x0, x1")
+}
+
+fn Codegen::logical_bin(self : Codegen, l : @ast.Expr, r : @ast.Expr, is_or : Bool) -> Unit {
+  let short_label = self.next_label()
+  let end_label = self.next_label()
+  let branch = if is_or { "b.ne" } else { "b.eq" }
+  let short_val = if is_or { "#1" } else { "#0" }
+  let long_val = if is_or { "#0" } else { "#1" }
+
+  self.translate_expr(l)
+  self.emit_line("  cmp x0, #0")
+  self.emit_line("  " + branch + " " + short_label)
+  self.translate_expr(r)
+  self.emit_line("  cmp x0, #0")
+  self.emit_line("  " + branch + " " + short_label)
+  self.emit_line("  mov x0, " + long_val)
+  self.emit_line("  b " + end_label)
+  self.emit_line(short_label + ":")
+  self.emit_line("  mov x0, " + short_val)
+  self.emit_line(end_label + ":")
+}
+
+fn Codegen::emit_line(self : Codegen, s : String) -> Unit {
+  self.output.write_string(s + "\n")
+}
+
+fn Codegen::next_label(self : Codegen) -> String {
+  let n = self.label_counter
+  self.label_counter = n + 1
+  "L" + n.to_string()
+}
+
+fn Codegen::add_string_literal(self : Codegen, content : String) -> String {
+  let n = self.string_labels
+  self.string_labels = n + 1
+  let label = "L_str" + n.to_string()
+  self.string_literals.push((label, content))
+  label
+}
+
+fn Codegen::add_float_constant(self : Codegen, value : Double, is_double : Bool) -> String {
+  let n = self.string_labels
+  self.string_labels = n + 1
+  let label = "L_float" + n.to_string()
+  let value_str = value.to_string()
+  self.float_constants.push((label, value_str, is_double))
+  label
+}
+// =============================================================================
+// Variable access via symbol table
+// =============================================================================
+
+fn Codegen::load_var(self : Codegen, name : String) -> Unit {
+  match self.analyzer {
+    Some(a) => {
+      match a.lookup(name) {
+        Some(sym) => {
+          match sym.kind {
+            @sema.SymbolKind::EnumConst => {
+              self.emit_line("  mov x0, #" + sym.value.to_string())
+              return ()
+            }
+            _ => {
+              if sym.offset == -1 {
+                // Global variable — load via ADRP
+                let prefix = load_reg_prefix(sym.typ)
+                self.emit_line("  adrp x8, _" + name + "@PAGE")
+                self.emit_line("  add x8, x8, _" + name + "@PAGEOFF")
+                self.emit_line("  ldr " + prefix + "0, [x8]")
+                return ()
+              }
+              let off = sym.offset - 16
+              let prefix = load_reg_prefix(sym.typ)
+              self.emit_line("  ldr " + prefix + "0, [x29, #" + off.to_string() + "]")
+              return ()
+            }
+          }
+        }
+        None => ()
+      }
+    }
+    None => ()
+  }
+  self.emit_line("  ldr x0, [sp]")
+}
+
+fn Codegen::store_var(self : Codegen, name : String) -> Unit {
+  match self.analyzer {
+    Some(a) => {
+      match a.lookup(name) {
+        Some(sym) => {
+          if sym.offset == -1 {
+            // Global variable — store via ADRP
+            let prefix = load_reg_prefix(sym.typ)
+            self.emit_line("  adrp x8, _" + name + "@PAGE")
+            self.emit_line("  add x8, x8, _" + name + "@PAGEOFF")
+            self.emit_line("  str " + prefix + "0, [x8]")
+            return ()
+          }
+          let off = sym.offset - 16
+          let prefix = load_reg_prefix(sym.typ)
+          self.emit_line("  str " + prefix + "0, [x29, #" + off.to_string() + "]")
+          return ()
+        }
+        None => ()
+      }
+    }
+    None => ()
+  }
+  self.emit_line("  str x0, [sp]")
+}
+
+fn Codegen::compute_frame_size(self : Codegen) -> Int {
+  // Default: 128 bytes (enough for small arrays and variadic calls)
+  // This is larger than needed for most functions.
+  128
+}
+
+/// Get the frame size needed for the current function (rounded up to 16)
+fn Codegen::frame_size(self : Codegen) -> Int {
+  self.compute_frame_size()
+}
+// =============================================================================
+// Type conversion helpers
+// =============================================================================
+
+fn Codegen::emit_cast(self : Codegen, to_type : @ast.Type, expr : @ast.Expr) -> Unit {
+  // Evaluate the expression (result in x0), then apply truncation/extension
+  // We oversimplify: assume int<->long is the main case that matters
+  match to_type {
+    @ast.Type::Int(_) => self.emit_line("  // cast to int (truncate x0 to w0)")
+    @ast.Type::Long(_) => self.emit_line("  sxtw x0, w0")
+    @ast.Type::Char(_) => self.emit_line("  sxtb x0, w0")
+    @ast.Type::Short(_) => self.emit_line("  sxth x0, w0")
+    _ => () // no-op for other casts
+  }
+}
+
+fn Codegen::translate_ternary(self : Codegen, cond : @ast.Expr, then_e : @ast.Expr, else_e : @ast.Expr) -> Unit {
+  let else_label = self.next_label()
+  let end_label = self.next_label()
+  self.translate_expr(cond)
+  self.emit_line("  cmp x0, #0")
+  self.emit_line("  b.eq " + else_label)
+  self.translate_expr(then_e)
+  self.emit_line("  b " + end_label)
+  self.emit_line(else_label + ":")
+  self.translate_expr(else_e)
+  self.emit_line(end_label + ":")
+}
+
+// =============================================================================
+// Switch/case translation
+// =============================================================================
+
+fn Codegen::translate_switch(self : Codegen, expr : @ast.Expr, body : @ast.Stmt) -> Unit {
+  let end_label = self.next_label()
+  self.break_stack.push(end_label)
+  // Evaluate switch expression into x0, save to x9
+  self.translate_expr(expr)
+  self.emit_line("  mov x9, x0")
+  self.translate_switch_body(body, end_label)
+  self.emit_line(end_label + ":")
+  self.break_stack.pop() |> ignore
+}
+
+fn Codegen::translate_switch_body(self : Codegen, stmt : @ast.Stmt, end_label : String) -> Unit {
+  match stmt {
+    @ast.Compound(stmts) => {
+      let mut next_test_label = ""
+      for s in stmts {
+        match s {
+          @ast.Case(val, case_body) => {
+            next_test_label = self.next_label()
+            self.translate_expr(val)
+            self.emit_line("  cmp x9, x0")
+            self.emit_line("  b.ne " + next_test_label)
+            self.translate_stmt(case_body)
+            self.emit_line("  b " + end_label)
+            self.emit_line(next_test_label + ":")
+          }
+          @ast.Default(default_body) => {
+            self.translate_stmt(default_body)
+          }
+          _ => self.translate_stmt(s)
+        }
+      }
+    }
+    _ => self.translate_stmt(stmt)
+  }
+}
+// =============================================================================
+// Pointer / array support
+// =============================================================================
+
+fn Codegen::translate_address_of(self : Codegen, e : @ast.Expr) -> Unit {
+  // Compute the address of an lvalue expression
+  match e {
+    @ast.Identifier(name) => {
+      // Check if this is a function (global, not on stack)
+      match self.analyzer {
+        Some(a) => {
+          match a.lookup(name) {
+            Some(sym) => {
+              if sym.offset == -1 {
+                // Global variable or function — load via ADRP
+                self.emit_line("  adrp x0, _" + name + "@PAGE")
+                self.emit_line("  add x0, x0, _" + name + "@PAGEOFF")
+                return ()
+              }
+              let off = sym.offset - 16
+              self.emit_line("  add x0, x29, #" + off.to_string())
+              return ()
+            }
+            None => ()
+          }
+        }
+        None => ()
+      }
+      self.emit_line("  mov x0, sp")  // fallback
+    }
+    @ast.Deref(e2) => {
+      // &*p = p
+      self.translate_expr(e2)
+    }
+    @ast.Subscript(ptr, index) => {
+      // &arr[i] = ptr + index * elem_size (assume elem_size = 4 for int)
+      self.translate_expr(ptr)
+      self.emit_line("  mov x9, x0")
+      self.translate_expr(index)
+      self.emit_line("  lsl x0, x0, #2") // index * 4 (int size)
+      self.emit_line("  add x0, x9, x0")
+    }
+    @ast.Dot(e2, member) => {
+      // &s.field = address of s + offset of field
+      self.translate_address_of(e2)
+      let off = self.struct_field_offset(e2, member)
+      if off > 0 {
+        self.emit_line("  add x0, x0, #" + off.to_string())
+      }
+    }
+    @ast.Arrow(e2, member) => {
+      // &ptr->field = ptr + offset of field
+      self.translate_expr(e2)  // load pointer value
+      let off = self.struct_field_offset(e2, member)
+      if off > 0 {
+        self.emit_line("  add x0, x0, #" + off.to_string())
+      }
+    }
+    _ => {
+      // Fallback: evaluate expression (assume it's already an lvalue address)
+      self.translate_expr(e)
+    }
+  }
+}
+
+fn Codegen::translate_deref(self : Codegen, e : @ast.Expr) -> Unit {
+  // Load from address in x0
+  self.translate_expr(e)
+  self.emit_line("  ldr x0, [x0]")
+}
+
+fn Codegen::translate_subscript(self : Codegen, ptr : @ast.Expr, index : @ast.Expr) -> Unit {
+  // Compute base address via translate_address_of (gives x29+offset for arrays)
+  // Then add index * element_size and load
+  self.translate_address_of(ptr)
+  self.emit_line("  mov x9, x0")   // save base address in x9
+  self.translate_expr(index)
+  self.emit_line("  lsl x0, x0, #2") // index * 4 for int
+  self.emit_line("  add x9, x9, x0") // base + index*size
+  self.emit_line("  ldr x0, [x9]")   // load from computed address
+}
+
+fn Codegen::translate_dot(self : Codegen, e : @ast.Expr, member : String) -> Unit {
+  // struct.field: compute address of struct, add field offset, then load
+  self.translate_address_of(e)
+  // Now x0 has struct base address. Compute field offset.
+  let offset = self.struct_field_offset(e, member)
+  if offset > 0 {
+    self.emit_line("  add x0, x0, #" + offset.to_string())
+  }
+  self.emit_line("  ldr x0, [x0]")
+}
+
+fn Codegen::translate_arrow(self : Codegen, e : @ast.Expr, member : String) -> Unit {
+  // ptr->field = (*ptr).field
+  self.translate_expr(e)  // load pointer value into x0
+  let offset = self.struct_field_offset(e, member)
+  if offset > 0 {
+    self.emit_line("  add x0, x0, #" + offset.to_string())
+  }
+  self.emit_line("  ldr x0, [x0]")
+}
+
+fn Codegen::struct_field_offset(self : Codegen, e : @ast.Expr, member : String) -> Int {
+  match e {
+    @ast.Identifier(name) => {
+      match self.analyzer {
+        Some(a) => {
+          match a.lookup_var_type(name) {
+            Some(typ) => self.field_offset_of_type(typ, member, a)
+            None => 0
+          }
+        }
+        None => 0
+      }
+    }
+    @ast.Dot(obj, _) => {
+      // Recursively find the type of the inner object
+      self.struct_field_offset(obj, member)
+    }
+    @ast.Deref(ptr) => {
+      // ptr->field: type is the pointed-to type
+      match self.analyzer {
+        Some(a) => {
+          match a.lookup_var_type(self.expr_name(ptr)) {
+            Some(@ast.Type::Pointer(inner)) => self.field_offset_of_type(inner, member, a)
+            _ => 0
+          }
+        }
+        None => 0
+      }
+    }
+    _ => 0
+  }
+}
+
+fn Codegen::expr_name(self : Codegen, e : @ast.Expr) -> String {
+  match e {
+    @ast.Identifier(name) => name
+    _ => ""
+  }
+}
+
+fn Codegen::field_offset_of_type(self : Codegen, typ : @ast.Type, member : String, a : @sema.Analyzer) -> Int {
+  match typ {
+    @ast.Type::Struct(tag, fields) => {
+      if fields.length() == 0 {
+        // Look up tag in analyzer's struct registry
+        match a.lookup_struct(tag) {
+          Some(@ast.Type::Struct(_, full_fields)) => {
+            let mut off = 0
+            for f in full_fields {
+              if f.name == member { return off }
+              off = off + @sema.type_size(f.typ)
+            }
+            return 0
+          }
+          _ => return 0
+        }
+      }
+      let mut off = 0
+      for f in fields {
+        if f.name == member { return off }
+        off = off + @sema.type_size(f.typ)
+      }
+      0
+    }
+    @ast.Type::Union(tag, fields) => {
+      // For unions, all fields start at offset 0
+      if fields.length() == 0 {
+        match a.lookup_struct(tag) {
+          Some(_) => return 0
+          None => return 0
+        }
+      }
+      0
+    }
+    _ => 0
+  }
+}
+
+// =============================================================================
+// Float/double support helpers
+// =============================================================================
+
+fn is_float_type(typ : @ast.Type) -> Bool {
+  match typ {
+    @ast.Type::Float => true
+    @ast.Type::Double => true
+    _ => false
+  }
+}
+
+fn reg_prefix(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float => "s"; @ast.Type::Double => "d"; _ => "x" }
+}
+
+fn load_reg_prefix(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float => "s"; @ast.Type::Double => "d"; _ => "x" }
+}
+
+fn mov_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fmov"; _ => "mov" }
+}
+
+fn add_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fadd"; _ => "add" }
+}
+
+fn sub_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fsub"; _ => "sub" }
+}
+
+fn mul_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fmul"; _ => "mul" }
+}
+
+fn div_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fdiv"; _ => "sdiv" }
+}
+
+fn neg_op(typ : @ast.Type) -> String {
+  match typ { @ast.Type::Float | @ast.Type::Double => "fneg"; _ => "neg" }
+}

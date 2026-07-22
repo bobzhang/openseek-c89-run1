@@ -1,0 +1,4 @@
+// AST types for C89
+import {
+  "moonbitlang/core/string",
+}
