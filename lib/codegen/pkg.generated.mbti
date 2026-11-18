@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "dii/c89/lib/codegen"
+
+import {
+  "dii/c89/lib/ast",
+  "dii/c89/lib/sema",
+}
+
+// Values
+pub fn generate(@ast.TranslationUnit, @sema.Analyzer?) -> String
+
+// Errors
+
+// Types and methods
+type Codegen
+pub fn Codegen::new(@sema.Analyzer?) -> Self
+
+// Type aliases
+
+// Traits

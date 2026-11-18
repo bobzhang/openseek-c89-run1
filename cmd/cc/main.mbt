@@ -26,7 +26,7 @@ fn dirname(path : String) -> String {
 ///|
 /// Resolve #include "file" directives by reading included files
 async fn resolve_includes(source : String, base_dir : String) -> String {
-  let result = StringBuilder::new()
+  let result = StringBuilder::StringBuilder()
   let lines = source.split("\n")
   for line_view in lines {
     let line = line_view.to_owned()
