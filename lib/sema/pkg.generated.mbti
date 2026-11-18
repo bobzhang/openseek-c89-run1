@@ -1,0 +1,51 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "dii/c89/lib/sema"
+
+import {
+  "dii/c89/lib/ast",
+}
+
+// Values
+pub fn analyze(@ast.TranslationUnit) -> Analyzer
+
+pub fn type_size(@ast.Type) -> Int32
+
+// Errors
+
+// Types and methods
+type Analyzer
+pub fn Analyzer::lookup(Self, String) -> Symbol?
+pub fn Analyzer::lookup_struct(Self, String) -> @ast.Type?
+pub fn Analyzer::lookup_var_type(Self, String) -> @ast.Type?
+pub fn Analyzer::new() -> Self
+
+type Scope
+pub fn Scope::new() -> Self
+
+pub struct Symbol {
+  name : String
+  kind : SymbolKind
+  typ : @ast.Type
+  offset : Int32
+  storage : @ast.StorageClass
+  value : Int32
+}
+
+pub enum SymbolKind {
+  Var
+  Func
+  Param
+  EnumConst
+}
+
+type Symtab
+pub fn Symtab::add(Self, Symbol) -> Unit
+pub fn Symtab::current_scope(Self) -> Scope?
+pub fn Symtab::lookup(Self, String) -> Symbol?
+pub fn Symtab::new() -> Self
+pub fn Symtab::pop_scope(Self) -> Unit
+pub fn Symtab::push_scope(Self) -> Unit
+
+// Type aliases
+
+// Traits

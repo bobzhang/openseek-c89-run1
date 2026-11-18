@@ -7,6 +7,6 @@ preferred_target = "native"
 warnings = "+test_unqualified_package"
 
 import {
-  "moonbitlang/async@0.20.2",
-  "moonbitlang/x@0.4.46",
+  "moonbitlang/async@0.22.9",
+  "moonbitlang/x@0.5.7",
 }

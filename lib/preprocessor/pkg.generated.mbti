@@ -1,0 +1,18 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "dii/c89/lib/preprocessor"
+
+// Values
+pub fn preprocess(String) -> String
+
+// Errors
+
+// Types and methods
+pub struct Macro {
+  name : String
+  replacement : String
+  params : Array[String]
+}
+
+// Type aliases
+
+// Traits

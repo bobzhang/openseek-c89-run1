@@ -1,0 +1,334 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "dii/c89/lib/ast"
+
+// Values
+pub fn array_type(Type, Int32) -> Type
+
+pub fn char_type(Signed) -> Type
+
+pub fn double_type() -> Type
+
+pub fn enum_type(String, Array[Enumerator]) -> Type
+
+pub fn float_type() -> Type
+
+pub fn function_type(Type, Array[Type]) -> Type
+
+pub fn int_type(Signed) -> Type
+
+pub fn kind_id(TokenKind) -> Int32
+
+pub fn loc(String, Int32, Int32) -> Loc
+
+pub fn long_type(Signed) -> Type
+
+pub fn make_enumerator(String, Int32) -> Enumerator
+
+pub fn make_field(String, Type, Int32) -> Field
+
+pub fn make_param(String, Type) -> Param
+
+pub fn make_token(TokenKind, Loc) -> Token
+
+pub fn new_lexer(String, String) -> Lexer
+
+pub fn new_translation_unit() -> TranslationUnit
+
+pub fn parse_translation_unit(String, String) -> TranslationUnit
+
+pub fn pointer_type(Type) -> Type
+
+pub fn same_kind(TokenKind, TokenKind) -> Bool
+
+pub fn sc_auto() -> StorageClass
+
+pub fn sc_extern() -> StorageClass
+
+pub fn sc_none() -> StorageClass
+
+pub fn sc_register() -> StorageClass
+
+pub fn sc_static() -> StorageClass
+
+pub fn sc_typedef() -> StorageClass
+
+pub fn short_type(Signed) -> Type
+
+pub fn signed_signed() -> Signed
+
+pub fn signed_unsigned() -> Signed
+
+pub fn signed_unspecified() -> Signed
+
+pub fn struct_type(String, Array[Field]) -> Type
+
+pub fn tokenize(String, String) -> Array[Token]
+
+pub fn typedef_type(String) -> Type
+
+pub fn union_type(String, Array[Field]) -> Type
+
+pub fn unknown_loc() -> Loc
+
+pub fn void_type() -> Type
+
+// Errors
+
+// Types and methods
+pub enum Decl {
+  VarDecl(StorageClass, Type, String, Init?)
+  FuncDef(Type, String, Array[Param], Stmt)
+  FuncDecl(Type, String, Array[Param])
+  StructDef(String, Array[Field])
+  EnumDef(String, Array[Enumerator])
+}
+
+pub struct Enumerator {
+  name : String
+  value : Int32
+}
+
+pub enum Expr {
+  IntLiteral(Int32)
+  FloatLiteral(Double)
+  DoubleLiteral(Double)
+  CharLiteral(Int32)
+  StringLiteral(String)
+  Identifier(String)
+  PrefixInc(Expr)
+  PrefixDec(Expr)
+  PostfixInc(Expr)
+  PostfixDec(Expr)
+  UnaryPlus(Expr)
+  UnaryMinus(Expr)
+  LogicalNot(Expr)
+  BitwiseNot(Expr)
+  Deref(Expr)
+  AddressOf(Expr)
+  SizeofExpr(Expr)
+  SizeofType(Type)
+  Add(Expr, Expr)
+  Sub(Expr, Expr)
+  Mul(Expr, Expr)
+  Div(Expr, Expr)
+  Mod(Expr, Expr)
+  BitAnd(Expr, Expr)
+  BitOr(Expr, Expr)
+  BitXor(Expr, Expr)
+  Shl(Expr, Expr)
+  Shr(Expr, Expr)
+  LogicalAnd(Expr, Expr)
+  LogicalOr(Expr, Expr)
+  Eq(Expr, Expr)
+  Ne(Expr, Expr)
+  Lt(Expr, Expr)
+  Gt(Expr, Expr)
+  Le(Expr, Expr)
+  Ge(Expr, Expr)
+  Assign(Expr, Expr)
+  AddAssign(Expr, Expr)
+  SubAssign(Expr, Expr)
+  MulAssign(Expr, Expr)
+  DivAssign(Expr, Expr)
+  ModAssign(Expr, Expr)
+  AndAssign(Expr, Expr)
+  OrAssign(Expr, Expr)
+  XorAssign(Expr, Expr)
+  ShlAssign(Expr, Expr)
+  ShrAssign(Expr, Expr)
+  Dot(Expr, String)
+  Arrow(Expr, String)
+  Subscript(Expr, Expr)
+  Call(Expr, Array[Expr])
+  Conditional(Expr, Expr, Expr)
+  Comma(Expr, Expr)
+  Cast(Type, Expr)
+}
+
+pub struct Field {
+  name : String
+  typ : Type
+  bit_width : Int32
+}
+
+pub enum Init {
+  Single(Expr)
+  Aggregate(Array[InitItem])
+}
+
+pub enum InitItem {
+  Designated(String?, Expr)
+}
+
+type Lexer
+pub fn Lexer::next_token(Self) -> Token
+
+pub struct Loc {
+  file : String
+  line : Int32
+  col : Int32
+}
+
+pub struct Param {
+  name : String
+  typ : Type
+}
+
+type Parser
+pub fn Parser::new(String, String) -> Self
+
+pub enum Signed {
+  Signed
+  Unsigned
+  Unspecified
+}
+
+pub enum Stmt {
+  ExprStmt(Expr?)
+  Compound(Array[Stmt])
+  If(Expr, Stmt, Stmt?)
+  Switch(Expr, Stmt)
+  Case(Expr, Stmt)
+  Default(Stmt)
+  While(Expr, Stmt)
+  DoWhile(Stmt, Expr)
+  For(Expr?, Expr?, Expr?, Stmt)
+  Goto(String)
+  Label(String, Stmt)
+  Break
+  Continue
+  Return(Expr?)
+  DeclStmt(Decl)
+}
+
+pub enum StorageClass {
+  None
+  Auto
+  Register
+  Static
+  Extern
+  Typedef
+}
+
+pub struct Token {
+  kind : TokenKind
+  loc : Loc
+}
+
+pub enum TokenKind {
+  Auto
+  Break
+  Case
+  Char
+  Const
+  Continue
+  Default
+  Do
+  Double
+  Else
+  Enum
+  Extern
+  Float
+  For
+  Goto
+  If
+  Int
+  Long
+  Register
+  Return
+  Short
+  Signed
+  Sizeof
+  Static
+  Struct
+  Switch
+  Typedef
+  Union
+  Unsigned
+  Void
+  Volatile
+  While
+  Identifier(String)
+  IntegerConst(String)
+  FloatConst(String)
+  CharConst(String)
+  StringLiteral(String)
+  Plus
+  Minus
+  Star
+  Slash
+  Percent
+  Amp
+  Pipe
+  Caret
+  Tilde
+  Bang
+  Lt
+  Gt
+  Le
+  Ge
+  Eq
+  Ne
+  AndAnd
+  OrOr
+  LtLt
+  GtGt
+  PlusPlus
+  MinusMinus
+  Arrow
+  Dot
+  Question
+  Colon
+  Semicolon
+  Comma
+  LParen
+  RParen
+  LBracket
+  RBracket
+  LBrace
+  RBrace
+  Assign
+  PlusAssign
+  MinusAssign
+  StarAssign
+  SlashAssign
+  PercentAssign
+  AmpAssign
+  PipeAssign
+  CaretAssign
+  LtLtAssign
+  GtGtAssign
+  Ellipsis
+  Eof
+  Invalid(String)
+}
+
+pub enum TopLevel {
+  Decl(Decl)
+  Function(Decl)
+}
+
+pub struct TranslationUnit {
+  decls : Array[TopLevel]
+}
+
+pub enum Type {
+  Void
+  Char(Signed)
+  Short(Signed)
+  Int(Signed)
+  Long(Signed)
+  Float
+  Double
+  Pointer(Type)
+  Array(Type, Int32)
+  Function(Type, Array[Type])
+  Struct(String, Array[Field])
+  Union(String, Array[Field])
+  Enum(String, Array[Enumerator])
+  Typedef(String)
+}
+
+// Type aliases
+
+// Traits
