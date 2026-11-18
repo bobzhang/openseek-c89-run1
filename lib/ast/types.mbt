@@ -4,8 +4,8 @@
 /// Source location
 pub struct Loc {
   file : String
-  line : Int
-  col : Int
+  line : Int32
+  col : Int32
 }
 
 ///|
@@ -107,7 +107,7 @@ pub enum TokenKind {
 
 ///|
 /// Convert TokenKind to an integer ID for comparison
-pub fn kind_id(kind : TokenKind) -> Int {
+pub fn kind_id(kind : TokenKind) -> Int32 {
   match kind {
     Eof => 0
     Auto => 1
@@ -223,14 +223,14 @@ pub enum Signed {
 pub struct Field {
   name : String
   typ : Type
-  bit_width : Int // -1 if not a bitfield
+  bit_width : Int32 // -1 if not a bitfield
 }
 
 ///|
 /// An enumerator
 pub struct Enumerator {
   name : String
-  value : Int
+  value : Int32
 }
 
 ///|
@@ -247,7 +247,7 @@ pub enum Type {
   // Pointer
   Pointer(Type)
   // Array
-  Array(Type, Int) // element type, size (-1 if unspecified)
+  Array(Type, Int32) // element type, size (-1 if unspecified)
   // Function type
   Function(Type, Array[Type]) // return type, parameter types
   // Struct/Union
@@ -301,7 +301,7 @@ pub fn pointer_type(t : Type) -> Type {
 }
 
 ///|
-pub fn array_type(t : Type, size : Int) -> Type {
+pub fn array_type(t : Type, size : Int32) -> Type {
   Array(t, size)
 }
 
@@ -379,20 +379,20 @@ pub fn signed_unspecified() -> Signed {
 
 ///|
 /// Field constructor
-pub fn make_field(name : String, typ : Type, bit_width : Int) -> Field {
-  { name, typ, bit_width }
+pub fn make_field(name : String, typ : Type, bit_width : Int32) -> Field {
+  { name, typ, bit_width, }
 }
 
 ///|
 /// Enumerator constructor
-pub fn make_enumerator(name : String, value : Int) -> Enumerator {
-  { name, value }
+pub fn make_enumerator(name : String, value : Int32) -> Enumerator {
+  { name, value, }
 }
 
 ///|
 /// Param constructor
 pub fn make_param(name : String, typ : Type) -> Param {
-  { name, typ }
+  { name, typ, }
 }
 
 ///|
@@ -410,10 +410,10 @@ pub enum StorageClass {
 /// Expression
 pub enum Expr {
   // Literals
-  IntLiteral(Int)
+  IntLiteral(Int32)
   FloatLiteral(Double) // single-precision float constant (has 'f' suffix)
   DoubleLiteral(Double) // double-precision constant (no 'f' suffix)
-  CharLiteral(Int) // character value as integer
+  CharLiteral(Int32) // character value as integer
   StringLiteral(String) // the string content (without quotes, with escapes resolved)
 
   // Identifier
@@ -570,25 +570,25 @@ pub struct TranslationUnit {
 ///|
 /// Create a Token
 pub fn make_token(kind : TokenKind, loc : Loc) -> Token {
-  { kind, loc }
+  { kind, loc, }
 }
 
 ///|
 /// Create a new translation unit
 pub fn new_translation_unit() -> TranslationUnit {
-  { decls: [] }
+  { decls: [], }
 }
 
 ///|
 /// Create a location
-pub fn loc(file : String, line : Int, col : Int) -> Loc {
-  { file, line, col }
+pub fn loc(file : String, line : Int32, col : Int32) -> Loc {
+  { file, line, col, }
 }
 
 ///|
 /// Default (unknown) location
 pub fn unknown_loc() -> Loc {
-  { file: "<unknown>", line: 0, col: 0 }
+  { file: "<unknown>", line: 0, col: 0, }
 }
 
 ///| C89 Compiler - Language Coverage Checklist

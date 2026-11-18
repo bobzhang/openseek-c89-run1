@@ -12,9 +12,9 @@ pub struct Symbol {
   name : String
   kind : SymbolKind
   typ : @ast.Type
-  offset : Int
+  offset : Int32
   storage : @ast.StorageClass
-  value : Int // constant value for enum constants
+  value : Int32 // constant value for enum constants
 }
 
 ///|
@@ -25,7 +25,7 @@ struct Scope {
 
 ///|
 pub fn Scope::new() -> Scope {
-  { symbols: [] }
+  { symbols: [], }
 }
 
 ///|
@@ -51,7 +51,7 @@ struct Symtab {
 
 ///|
 pub fn Symtab::new() -> Symtab {
-  { scopes: [Scope::new()] }
+  { scopes: [Scope::new()], }
 }
 
 ///|

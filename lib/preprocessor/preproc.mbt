@@ -13,8 +13,8 @@ pub struct Macro {
 
 ///|
 pub fn preprocess(source : String) -> String {
-  let pp : Preprocessor = { macros: [] }
-  let result = StringBuilder::new()
+  let pp : Preprocessor = { macros: [], }
+  let result = StringBuilder::StringBuilder()
   let lines_iter = source.split("\n")
   let skipping : Array[Bool] = []
   let mut skip = false
@@ -43,7 +43,7 @@ pub fn preprocess(source : String) -> String {
                 // Space before paren: object-like macro with value
                 let name = rest[:sidx].to_owned()
                 let replacement = rest[sidx + 1:].trim().to_owned()
-                pp.macros.push({ name, replacement, params: [] })
+                pp.macros.push({ name, replacement, params: [], })
               }
               _ => {
                 // Paren first (or no space): function-like macro
@@ -55,10 +55,10 @@ pub fn preprocess(source : String) -> String {
                     let params_str = after[:cidx].trim().to_owned()
                     let params_arr = parse_macro_params(params_str)
                     let replacement = after[cidx + 1:].trim().to_owned()
-                    pp.macros.push({ name, replacement, params: params_arr })
+                    pp.macros.push({ name, replacement, params: params_arr, })
                   }
                   None =>
-                    pp.macros.push({ name: rest, replacement: "", params: [] })
+                    pp.macros.push({ name: rest, replacement: "", params: [], })
                 }
               }
             }
@@ -68,10 +68,10 @@ pub fn preprocess(source : String) -> String {
               Some(idx) => {
                 let name = rest[:idx].to_owned()
                 let replacement = rest[idx + 1:].trim().to_owned()
-                pp.macros.push({ name, replacement, params: [] })
+                pp.macros.push({ name, replacement, params: [], })
               }
               None =>
-                pp.macros.push({ name: rest, replacement: "", params: [] })
+                pp.macros.push({ name: rest, replacement: "", params: [], })
             }
         }
       } else if dir.has_prefix("undef ") {
@@ -156,7 +156,7 @@ fn extract_header_name(s : String) -> String? {
 }
 
 ///|
-fn find_last_char(s : String, ch : Char) -> Int? {
+fn find_last_char(s : String, ch : Char) -> Int32? {
   let mut i = s.length() - 1
   while i >= 0 {
     match s.get_char(i) {
@@ -179,7 +179,7 @@ fn is_defined(pp : Preprocessor, name : String) -> Bool {
 }
 
 ///|
-fn eval_constant(cond : String, pp : Preprocessor) -> Int {
+fn eval_constant(cond : String, pp : Preprocessor) -> Int32 {
   let text = cond.trim().to_owned()
   if text.has_prefix("defined(") && text[text.length() - 1] == ')' {
     let inner = text[8:text.length() - 1].trim().to_owned()
@@ -189,7 +189,7 @@ fn eval_constant(cond : String, pp : Preprocessor) -> Int {
     let inner = text[8:].trim().to_owned()
     return if is_defined(pp, inner) { 1 } else { 0 }
   }
-  let n : Int = @string.from_str(text) catch { _ => 0 }
+  let n : Int32 = @string.from_str(text) catch { _ => 0 }
   n
 }
 
@@ -202,7 +202,7 @@ fn expand_line(pp : Preprocessor, line : String) -> String {
       continue
     }
     if m.name != "" {
-      let mut idx : Int? = result.find(m.name)
+      let mut idx : Int32? = result.find(m.name)
       while true {
         match idx {
           Some(pos) => {
@@ -225,7 +225,7 @@ fn expand_line(pp : Preprocessor, line : String) -> String {
 }
 
 ///|
-fn line_char(s : String, pos : Int) -> UInt16 {
+fn line_char(s : String, pos : Int32) -> UInt16 {
   if pos < 0 || pos >= s.length() {
     ' '.to_int().to_uint16()
   } else {
@@ -275,7 +275,7 @@ fn expand_func_macros(line : String, pp : Preprocessor) -> String {
         continue
       }
       let pattern = m.name + "("
-      let mut idx : Int? = result.find(pattern)
+      let mut idx : Int32? = result.find(pattern)
       while true {
         match idx {
           Some(pos) => {
@@ -363,7 +363,7 @@ fn substitute_macro_args(
   if params.length() == 0 || args.length() == 0 {
     return replacement
   }
-  let result = StringBuilder::new()
+  let result = StringBuilder::StringBuilder()
   let mut i = 0
   while i < replacement.length() {
     // Check for identifier start

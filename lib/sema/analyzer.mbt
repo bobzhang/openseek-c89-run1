@@ -7,7 +7,7 @@ struct Analyzer {
 
 ///|
 pub fn Analyzer::new() -> Analyzer {
-  { symtab: Symtab::new(), structs: [] }
+  { symtab: Symtab::new(), structs: [], }
 }
 
 ///|
@@ -128,8 +128,8 @@ fn Analyzer::analyze_function(self : Analyzer, decl : @ast.Decl) -> Unit {
 fn Analyzer::assign_local_offsets(
   self : Analyzer,
   stmt : @ast.Stmt,
-  offset : Int,
-) -> Int {
+  offset : Int32,
+) -> Int32 {
   match stmt {
     @ast.Compound(stmts) => {
       let mut cur_off = offset
@@ -200,7 +200,7 @@ fn Analyzer::assign_local_offsets(
 
 ///|
 /// Compute byte size of a type
-pub fn type_size(typ : @ast.Type) -> Int {
+pub fn type_size(typ : @ast.Type) -> Int32 {
   match typ {
     @ast.Type::Void => 0
     @ast.Type::Char(_) => 1
@@ -263,7 +263,7 @@ pub fn Analyzer::lookup_var_type(self : Analyzer, name : String) -> @ast.Type? {
 }
 
 ///|
-fn Analyzer::type_size_of(self : Analyzer, typ : @ast.Type) -> Int {
+fn Analyzer::type_size_of(self : Analyzer, typ : @ast.Type) -> Int32 {
   match typ {
     @ast.Type::Struct(tag, fields) =>
       if fields.length() == 0 && tag != "" {
