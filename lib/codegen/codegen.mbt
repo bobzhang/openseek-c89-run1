@@ -2,8 +2,8 @@
 /// Arm64 macOS code generator
 struct Codegen {
   output : StringBuilder
-  mut label_counter : Int
-  mut string_labels : Int
+  mut label_counter : Int32
+  mut string_labels : Int32
   string_literals : Array[(String, String)]
   float_constants : Array[(String, String, Bool)] // label, value_str, is_double
   global_vars : Array[(String, @ast.Type, @ast.Init?, @ast.StorageClass)]
@@ -18,7 +18,7 @@ struct Codegen {
 ///|
 pub fn Codegen::new(analyzer : @sema.Analyzer?) -> Codegen {
   {
-    output: StringBuilder::new(),
+    output: StringBuilder::StringBuilder(),
     label_counter: 0,
     string_labels: 0,
     string_literals: [],
@@ -251,7 +251,9 @@ fn Codegen::translate_stmt(self : Codegen, stmt : @ast.Stmt) -> Unit {
                 None => ()
               }
               // Track guard for data section
-              self.static_locals.push((guard_label, @ast.char_type(@ast.signed_unsigned()), None))
+              self.static_locals.push(
+                (guard_label, @ast.char_type(@ast.signed_unsigned()), None),
+              )
             }
             _ =>
               match init {
@@ -551,7 +553,7 @@ fn Codegen::translate_expr(self : Codegen, expr : @ast.Expr) -> Unit {
           self.emit_line("  mov x16, x0") // save function pointer in x16
         }
         if n > 0 {
-        // Evaluate args right-to-left, pushing onto stack.
+          // Evaluate args right-to-left, pushing onto stack.
           // Each push decrements sp by 16. Nested calls within arg expressions
           // use their own push/pop, so they don't clobber our pushed values
           // (which are deeper in the stack).
@@ -665,7 +667,6 @@ fn Codegen::binary(
   self.emit_line("  ldr x1, [sp], #16")
   self.emit_line("  " + op + " x0, x1, x0")
 }
-
 
 ///|
 fn Codegen::expr_type(self : Codegen, e : @ast.Expr) -> @ast.Type {
@@ -920,9 +921,7 @@ fn Codegen::store_var(self : Codegen, name : String) -> Unit {
           }
           let off = -(sym.offset + 32)
           let instr = store_instr(sym.typ)
-          self.emit_line(
-            "  " + instr + "0, [x29, #" + off.to_string() + "]",
-          )
+          self.emit_line("  " + instr + "0, [x29, #" + off.to_string() + "]")
           return ()
         }
         None => ()
@@ -1173,7 +1172,7 @@ fn Codegen::translate_subscript(
 }
 
 ///|
-fn Codegen::array_element_size(self : Codegen, e : @ast.Expr) -> Int {
+fn Codegen::array_element_size(self : Codegen, e : @ast.Expr) -> Int32 {
   match e {
     @ast.Identifier(name) =>
       match self.analyzer {
@@ -1224,7 +1223,7 @@ fn Codegen::struct_field_offset(
   self : Codegen,
   e : @ast.Expr,
   field_name : String,
-) -> Int {
+) -> Int32 {
   match e {
     @ast.Identifier(name) =>
       match self.analyzer {
@@ -1267,7 +1266,7 @@ fn Codegen::field_offset_of_type(
   typ : @ast.Type,
   field_name : String,
   a : @sema.Analyzer,
-) -> Int {
+) -> Int32 {
   match typ {
     @ast.Type::Struct(tag, fields) => {
       if fields.length() == 0 {
@@ -1336,7 +1335,8 @@ fn reg_prefix(typ : @ast.Type) -> String {
 fn load_instr(typ : @ast.Type) -> String {
   match typ {
     @ast.Type::Char(@ast.Signed::Signed) => "ldrsb x"
-    @ast.Type::Char(@ast.Signed::Unsigned) | @ast.Type::Char(@ast.Signed::Unspecified) => "ldrb w"
+    @ast.Type::Char(@ast.Signed::Unsigned)
+    | @ast.Type::Char(@ast.Signed::Unspecified) => "ldrb w"
     @ast.Type::Short(@ast.Signed::Signed) => "ldrsh x"
     @ast.Type::Short(@ast.Signed::Unsigned) => "ldrh w"
     @ast.Type::Float => "ldr s"
@@ -1356,8 +1356,6 @@ fn store_instr(typ : @ast.Type) -> String {
     _ => "str x"
   }
 }
-
-
 
 // =============================================================================
 // Compound assignment codegen
@@ -1482,6 +1480,7 @@ fn Codegen::translate_plain_assign(
     }
   }
 }
+
 ///|
 /// Postfix inc/dec: return old value, then write new value back to lvalue
 fn Codegen::translate_postfix_incdec(

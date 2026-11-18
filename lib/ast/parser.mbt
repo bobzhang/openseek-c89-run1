@@ -11,7 +11,7 @@ pub fn Parser::new(source : String, file : String) -> Parser {
   let lex = new_lexer(source, file)
   let cur = lex.next_token()
   let p = lex.next_token()
-  { lex, current: cur, peek: p }
+  { lex, current: cur, peek: p, }
 }
 
 ///|
@@ -90,7 +90,7 @@ fn Parser::token_text(self : Parser) -> String {
 }
 
 ///|
-fn Parser::kind_id_cur(self : Parser) -> Int {
+fn Parser::kind_id_cur(self : Parser) -> Int32 {
   kind_id(self.current.kind)
 }
 
@@ -333,7 +333,7 @@ fn Parser::parse_struct_or_union(self : Parser) -> Decl? {
       if self.match_token(Colon) {
         bit_width = self.parse_constant_int()
       }
-      fields.push({ name: fname, typ: ftype, bit_width })
+      fields.push({ name: fname, typ: ftype, bit_width, })
       if !self.match_token(Comma) {
         break
       }
@@ -368,7 +368,7 @@ fn Parser::parse_enum_specifier(self : Parser) -> Decl? {
     if self.match_token(Assign) {
       value = self.parse_constant_int()
     }
-    enumerators.push({ name: ename, value })
+    enumerators.push({ name: ename, value, })
     value = value + 1
     if !self.match_token(Comma) {
       break
@@ -406,7 +406,7 @@ fn Parser::parse_struct_or_union_type(self : Parser) -> Type {
         if self.match_token(Colon) {
           bit_width = self.parse_constant_int()
         }
-        fields.push({ name: fname, typ: ftype, bit_width })
+        fields.push({ name: fname, typ: ftype, bit_width, })
         if !self.match_token(Comma) {
           break
         }
@@ -449,7 +449,7 @@ fn Parser::parse_enum_type(self : Parser) -> Type {
       if self.match_token(Assign) {
         value = self.parse_constant_int()
       }
-      enumerators.push({ name: ename, value })
+      enumerators.push({ name: ename, value, })
       value = value + 1
       if !self.match_token(Comma) {
         break
@@ -577,7 +577,7 @@ fn Parser::parse_parameter_list(self : Parser) -> Array[Param] {
       self.advance()
       return params
     }
-    params.push({ name: "void", typ: Type::Int(Unspecified) })
+    params.push({ name: "void", typ: Type::Int(Unspecified), })
     if !self.match_token(Comma) {
       self.expect(RParen)
       return params
@@ -620,7 +620,7 @@ fn Parser::parse_parameter_list(self : Parser) -> Array[Param] {
       self.expect(RBracket)
     }
 
-    params.push({ name: pname, typ: final_type })
+    params.push({ name: pname, typ: final_type, })
     if !self.match_token(Comma) {
       break
     }
@@ -1018,13 +1018,12 @@ fn Parser::parse_assignment_expression(self : Parser) -> Expr {
   self.parse_assignment()
 }
 
-
 // =============================================================================
 // Constant
 // =============================================================================
 
 ///|
-fn Parser::parse_constant_int(self : Parser) -> Int {
+fn Parser::parse_constant_int(self : Parser) -> Int32 {
   match self.parse_conditional() {
     IntLiteral(n) => n
     _ => 0
@@ -1296,16 +1295,16 @@ fn Parser::parse_expression_statement(self : Parser) -> Stmt {
 // =============================================================================
 
 ///|
-fn parse_int_literal(s : String) -> Int {
+fn parse_int_literal(s : String) -> Int32 {
   let text = trim_suffixes(s)
   if text.has_prefix("0x") || text.has_prefix("0X") {
     let hex = text[2:].to_owned()
-    let mut n : Int = 0
+    let mut n : Int32 = 0
     for ch in hex {
       let d = match ch {
-        '0'..='9' => ch.to_int() - '0'.to_int()
-        'a'..='f' => ch.to_int() - 'a'.to_int() + 10
-        'A'..='F' => ch.to_int() - 'A'.to_int() + 10
+        '0'..<='9' => ch.to_int() - '0'.to_int()
+        'a'..<='f' => ch.to_int() - 'a'.to_int() + 10
+        'A'..<='F' => ch.to_int() - 'A'.to_int() + 10
         _ => 0
       }
       n = n * 16 + d
@@ -1314,13 +1313,13 @@ fn parse_int_literal(s : String) -> Int {
   }
   if text.has_prefix("0") && text.length() > 1 {
     let oct = text[1:].to_owned()
-    let mut n : Int = 0
+    let mut n : Int32 = 0
     for ch in oct {
       n = n * 8 + (ch.to_int() - '0'.to_int())
     }
     return n
   }
-  let n : Int = @string.from_str(text) catch { _ => 0 }
+  let n : Int32 = @string.from_str(text) catch { _ => 0 }
   n
 }
 
@@ -1336,7 +1335,7 @@ fn parse_float_literal(s : String) -> Double {
 }
 
 ///|
-fn parse_char_literal(s : String) -> Int {
+fn parse_char_literal(s : String) -> Int32 {
   let inner = s[1:s.length() - 1]
   if inner.has_prefix("\\") {
     parse_escape_seq(inner.to_owned())
@@ -1349,7 +1348,7 @@ fn parse_char_literal(s : String) -> Int {
 }
 
 ///|
-fn parse_escape_seq(s : String) -> Int {
+fn parse_escape_seq(s : String) -> Int32 {
   match s {
     "\\n" => '\n'.to_int()
     "\\t" => '\t'.to_int()
@@ -1371,7 +1370,6 @@ fn parse_escape_seq(s : String) -> Int {
       }
   }
 }
-
 
 ///|
 fn trim_suffixes(s : String) -> String {

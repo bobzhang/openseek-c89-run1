@@ -4,12 +4,12 @@
 /// Lexer state
 struct Lexer {
   source : String
-  mut pos : Int
-  mut line : Int
-  mut col : Int
+  mut pos : Int32
+  mut line : Int32
+  mut col : Int32
   file : String
-  mut token_start_line : Int
-  mut token_start_col : Int
+  mut token_start_line : Int32
+  mut token_start_col : Int32
 }
 
 ///|
@@ -37,7 +37,7 @@ fn Lexer::current(self : Lexer) -> Char {
 
 ///|
 /// Peek ahead n characters
-fn Lexer::peek(self : Lexer, n : Int) -> Char {
+fn Lexer::peek(self : Lexer, n : Int32) -> Char {
   let idx = self.pos + n
   match self.source.get_char(idx) {
     Some(c) => c
@@ -120,7 +120,7 @@ fn Lexer::read_identifier(self : Lexer) -> Token {
   while true {
     let ch = self.current()
     match ch {
-      'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => self.advance() |> ignore
+      'a'..<='z' | 'A'..<='Z' | '0'..<='9' | '_' => self.advance() |> ignore
       _ => break
     }
   }
@@ -177,7 +177,7 @@ fn Lexer::read_number(self : Lexer) -> Token {
     while true {
       let ch = self.current()
       match ch {
-        '0'..='9' | 'a'..='f' | 'A'..='F' => self.advance() |> ignore
+        '0'..<='9' | 'a'..<='f' | 'A'..<='F' => self.advance() |> ignore
         _ => break
       }
     }
@@ -196,7 +196,7 @@ fn Lexer::read_number(self : Lexer) -> Token {
   while true {
     let ch = self.current()
     match ch {
-      '0'..='9' => self.advance() |> ignore
+      '0'..<='9' => self.advance() |> ignore
       _ => break
     }
   }
@@ -209,7 +209,7 @@ fn Lexer::read_number(self : Lexer) -> Token {
     while true {
       let ch = self.current()
       match ch {
-        '0'..='9' => self.advance() |> ignore
+        '0'..<='9' => self.advance() |> ignore
         _ => break
       }
     }
@@ -225,7 +225,7 @@ fn Lexer::read_number(self : Lexer) -> Token {
     while true {
       let ch = self.current()
       match ch {
-        '0'..='9' => self.advance() |> ignore
+        '0'..<='9' => self.advance() |> ignore
         _ => break
       }
     }
