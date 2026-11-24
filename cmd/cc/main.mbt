@@ -55,7 +55,7 @@ async fn resolve_includes(source : String, base_dir : String) -> String {
 }
 
 ///|
-async fn main {
+async fn main_async() -> Unit {
   let args = @argparse.parse(
     Command("cc", about="C89 to arm64 macOS compiler", positionals=[
       PositionArg("input", about="Input C file"),
@@ -110,4 +110,9 @@ async fn main {
   }
 
   println("compiled: " + out_file)
+}
+
+///|
+fn main {
+  @async.run_async_main(main_async)
 }
