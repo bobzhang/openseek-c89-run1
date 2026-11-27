@@ -68,7 +68,7 @@ async fn main_async() -> Unit {
   }
   if input_opt is None {
     @stdio.stderr.write("error: no input file\n")
-    @sys.exit(1)
+    @env.exit(1)
   }
   let input = input_opt.unwrap()
 
@@ -90,7 +90,7 @@ async fn main_async() -> Unit {
   }
   if !has_func {
     @stdio.stderr.write("error: no functions found\n")
-    @sys.exit(1)
+    @env.exit(1)
   }
   // Run semantic analysis
   let analyzer = @sema.analyze(tu)
@@ -106,7 +106,7 @@ async fn main_async() -> Unit {
 
   if exit_code != 0 {
     @stdio.stderr.write(stderr.text() + "\n")
-    @sys.exit(1)
+    @env.exit(1)
   }
 
   println("compiled: " + out_file)
